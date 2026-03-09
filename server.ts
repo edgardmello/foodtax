@@ -25,123 +25,6 @@ db.exec(`
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
-async function processWithGemini(base64Data: string, mimeType: string) {
-  console.log("[Gemini] Processing receipt...");
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: [
-      {
-        inlineData: {
-          data: base64Data,
-          mimeType: mimeType || "image/jpeg",
-        },
-      },
-      {
-        text: "Analise esta nota fiscal de mercado brasileira. Extraia o valor total da compra, o valor do imposto federal e o valor do imposto estadual. Se algum valor não for encontrado, retorne 0.",
-      },
-    ],
-    config: {
-      responseMimeType: "application/json",
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          total: { type: Type.NUMBER, description: "Valor total da nota fiscal" },
-          taxFederal: { type: Type.NUMBER, description: "Valor do imposto federal pago" },
-          taxState: { type: Type.NUMBER, description: "Valor do imposto estadual pago" },
-        },
-        required: ["total", "taxFederal", "taxState"],
-      },
-    },
-  });
-
-  return JSON.parse(response.text || "{}");
-}
-
-async function processWithOllama(base64Data: string, model: string) {
-  const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
-  console.log(`[Ollama] Using model: ${model} at ${ollamaUrl}`);
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 45000); // 45 seconds timeout
-
-  try {
-    const ollamaRes = await fetch(`${ollamaUrl}/api/generate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: model,
-        prompt: `Siga estas instruções rigorosamente:
-1. Localize o "VALOR TOTAL" ou "TOTAL R$" da nota fiscal.
-2. Localize a frase "Trib aprox" ou "Lei 12.741".
-3. Extraia o valor de "Federal" e o valor de "Estadual".
-
-Responda APENAS o JSON:
-{"total": 0.0, "taxFederal": 0.0, "taxState": 0.0}
-
-Não inclua explicações. Use 0.0 se não encontrar.`,
-        images: [base64Data],
-        stream: true
-      }),
-      signal: controller.signal
-    });
-
-    clearTimeout(timeoutId);
-
-    if (!ollamaRes.ok) {
-      const errorText = await ollamaRes.text();
-      throw new Error(`Ollama API error: ${ollamaRes.status} - ${errorText}`);
-    }
-
-    const reader = ollamaRes.body?.getReader();
-    let responseText = "";
-    if (reader) {
-      const decoder = new TextDecoder();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split('\n');
-        for (const line of lines) {
-          if (line.trim()) {
-            try {
-              const json = JSON.parse(line);
-              if (json.response) responseText += json.response;
-              if (json.done) break;
-            } catch (e) {
-              console.error("Error parsing streaming chunk:", e);
-            }
-          }
-        }
-      }
-    }
-
-    if (!responseText.trim()) {
-      throw new Error("Ollama returned an empty response.");
-    }
-
-    let jsonString = responseText;
-    const jsonBlockMatch = responseText.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
-    if (jsonBlockMatch) {
-      jsonString = jsonBlockMatch[1];
-    } else {
-      const start = responseText.indexOf('{');
-      const end = responseText.lastIndexOf('}');
-      if (start !== -1 && end !== -1) {
-        jsonString = responseText.substring(start, end + 1);
-      }
-    }
-
-    let data = JSON.parse(jsonString);
-    return {
-      total: data.total || data.Total || 0,
-      taxFederal: data.taxFederal || data.tax_federal || data.taxFederalValue || 0,
-      taxState: data.taxState || data.tax_state || data.taxStateValue || 0
-    };
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
 app.get("/api/ollama/check", async (req, res) => {
   try {
     const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
@@ -161,30 +44,150 @@ app.post("/api/receipts", async (req, res) => {
       return res.status(400).json({ error: "No image provided" });
     }
 
+    // Remove data URL prefix if present
     const base64Data = imageBase64.includes(",") 
       ? imageBase64.split(",")[1] 
       : imageBase64;
 
-    let data: any = null;
-    let usedFallback = false;
+    let data: any = {};
 
     if (engine === "ollama") {
-      try {
-        const modelToUse = ollamaModel || "qwen3.5:0.8b";
-        data = await processWithOllama(base64Data, modelToUse);
-        
-        // Se retornar tudo zero, consideramos uma falha de leitura e tentamos fallback
-        if (data.total === 0 && data.taxFederal === 0 && data.taxState === 0) {
-          console.warn("[Ollama] Model returned all zeros, triggering fallback to Gemini.");
-          throw new Error("Ollama returned zeros");
-        }
-      } catch (error) {
-        console.error("[Ollama] Failed or timed out, falling back to Gemini:", error);
-        usedFallback = true;
-        data = await processWithGemini(base64Data, mimeType);
+      const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
+      const modelToUse = ollamaModel || "qwen3.5:0.8b";
+      console.log(`[Ollama] Using model: ${modelToUse} at ${ollamaUrl}`);
+      
+      const ollamaRes = await fetch(`${ollamaUrl}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: modelToUse,
+          prompt: `Analise esta nota fiscal brasileira e extraia os valores numéricos.
+IMPORTANTE: Para o valor total, use o "VALOR A PAGAR" ou "TOTAL LÍQUIDO" (após descontos). NÃO use o valor bruto se houver descontos.
+
+Siga estas instruções:
+1. Localize o "VALOR A PAGAR" ou "TOTAL R$" final.
+2. Localize a frase "Trib aprox" ou "Lei 12.741".
+3. Extraia o valor de "Federal" e o valor de "Estadual".
+
+Responda APENAS o JSON:
+{"total": 0.0, "taxFederal": 0.0, "taxState": 0.0}
+
+Use 0.0 se não encontrar.`,
+          images: [base64Data],
+          stream: true
+        })
+      });
+
+      if (!ollamaRes.ok) {
+        const errorText = await ollamaRes.text();
+        console.error(`[Ollama] API error: ${ollamaRes.status} - ${errorText}`);
+        throw new Error(`Ollama API error: ${ollamaRes.statusText}`);
       }
+
+      // Read streaming response
+      const reader = ollamaRes.body?.getReader();
+      let responseText = "";
+      if (reader) {
+        const decoder = new TextDecoder();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split('\n');
+          for (const line of lines) {
+            if (line.trim()) {
+              try {
+                const json = JSON.parse(line);
+                if (json.response) responseText += json.response;
+                if (json.done) break;
+              } catch (e) {
+                console.error("Error parsing streaming chunk:", e);
+              }
+            }
+          }
+        }
+      }
+      
+      console.log(`[Ollama] Raw response:`, responseText);
+      
+      if (!responseText.trim()) {
+        throw new Error("Ollama returned an empty response.");
+      }
+
+      // Robust JSON extraction
+      let jsonString = responseText;
+      
+      // 1. Try to find JSON inside markdown code blocks
+      const jsonBlockMatch = responseText.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+      if (jsonBlockMatch) {
+        jsonString = jsonBlockMatch[1];
+      } else {
+        // 2. Try to find anything between the first { and the last }
+        const start = responseText.indexOf('{');
+        const end = responseText.lastIndexOf('}');
+        if (start !== -1 && end !== -1) {
+          jsonString = responseText.substring(start, end + 1);
+        }
+      }
+      
+      console.log(`[Ollama] Extracted JSON string:`, jsonString);
+      try {
+        data = JSON.parse(jsonString);
+      } catch (e) {
+        console.warn("[Ollama] JSON Parse failed, attempting regex extraction...");
+        // Fallback: extract numbers using regex if JSON parse fails
+        const totalMatch = responseText.match(/(?:VALOR A PAGAR|TOTAL R\$|Total|TOTAL).*?(\d+[,.]\d{2})/i);
+        const fedMatch = responseText.match(/(?:Federal|Fed).*?(\d+[,.]\d{2})/i);
+        const stateMatch = responseText.match(/(?:Estadual|Est).*?(\d+[,.]\d{2})/i);
+        
+        data = {
+          total: totalMatch ? parseFloat(totalMatch[1].replace(',', '.')) : 0,
+          taxFederal: fedMatch ? parseFloat(fedMatch[1].replace(',', '.')) : 0,
+          taxState: stateMatch ? parseFloat(stateMatch[1].replace(',', '.')) : 0
+        };
+        
+        if (data.total === 0) {
+           console.error("[Ollama] Regex extraction failed too. Original text:", responseText);
+           throw new Error("Failed to parse response from Ollama.");
+        }
+      }
+
+      // Normalize field names (case insensitive-ish)
+      data = {
+        total: data.total || data.Total || 0,
+        taxFederal: data.taxFederal || data.tax_federal || data.taxFederalValue || 0,
+        taxState: data.taxState || data.tax_state || data.taxStateValue || 0
+      };
+      console.log(`[Ollama] Final normalized data:`, data);
     } else {
-      data = await processWithGemini(base64Data, mimeType);
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [
+          {
+            inlineData: {
+              data: base64Data,
+              mimeType: mimeType || "image/jpeg",
+            },
+          },
+          {
+            text: "Analise esta nota fiscal de mercado brasileira. Extraia o valor total líquido da compra (VALOR A PAGAR), o valor do imposto federal e o valor do imposto estadual (indicados na Lei da Transparência/Lei 12.741). Se algum valor não for encontrado, retorne 0.",
+          },
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              total: { type: Type.NUMBER, description: "Valor total da nota fiscal" },
+              taxFederal: { type: Type.NUMBER, description: "Valor do imposto federal pago" },
+              taxState: { type: Type.NUMBER, description: "Valor do imposto estadual pago" },
+            },
+            required: ["total", "taxFederal", "taxState"],
+          },
+        },
+      });
+
+      data = JSON.parse(response.text || "{}");
     }
 
     const stmt = db.prepare(
@@ -192,7 +195,7 @@ app.post("/api/receipts", async (req, res) => {
     );
     const info = stmt.run(data.total || 0, data.taxFederal || 0, data.taxState || 0);
 
-    res.json({ id: info.lastInsertRowid, ...data, fallback: usedFallback });
+    res.json({ id: info.lastInsertRowid, ...data });
   } catch (error) {
     console.error("Error processing receipt:", error);
     res.status(500).json({ error: "Failed to process receipt" });
