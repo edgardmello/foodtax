@@ -143,7 +143,7 @@ async function processWithOllama(base64Data: string, model: string) {
   console.log(`[Ollama] Using model: ${model} at ${ollamaUrl}`);
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 45000); // 45 seconds timeout
+  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 seconds timeout
 
   try {
     const ollamaRes = await fetch(`${ollamaUrl}/api/generate`, {
