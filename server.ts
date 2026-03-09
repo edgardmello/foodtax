@@ -331,16 +331,29 @@ app.get("/api/ollama/check", async (req, res) => {
 
 app.get("/api/custom/models", async (req, res) => {
   try {
-    const { url } = req.query;
-    if (!url) return res.status(400).json({ error: "URL is required" });
+    let { url } = req.query;
+    if (!url || typeof url !== 'string') return res.status(400).json({ error: "URL is required" });
     
-    const response = await fetch(`${url}/v1/models`);
-    if (!response.ok) throw new Error("Server not responding correctly");
+    // Clean URL: remove trailing slash
+    url = url.replace(/\/$/, "");
+    
+    console.log(`[Proxy] Fetching models from: ${url}/v1/models`);
+    const response = await fetch(`${url}/v1/models`, {
+      method: "GET",
+      headers: { "Accept": "application/json" }
+    });
+    
+    if (!response.ok) {
+      const text = await response.text();
+      console.error(`[Proxy] Server responded with ${response.status}: ${text}`);
+      return res.status(response.status).json({ error: `Server error: ${response.status}` });
+    }
     
     const data = await response.json();
     res.json(data);
-  } catch (error) {
-    res.status(500).json({ error: "Failed to fetch models from custom provider" });
+  } catch (error: any) {
+    console.error(`[Proxy] Connection failed: ${error.message}`);
+    res.status(500).json({ error: `Connection failed: ${error.message}. Check if server is running and URL is correct.` });
   }
 });
 

@@ -22,6 +22,7 @@ export default function App() {
   const [customUrl, setCustomUrl] = useState('http://localhost:1234');
   const [customModel, setCustomModel] = useState('');
   const [customModels, setCustomModels] = useState<any[]>([]);
+  const [customError, setCustomError] = useState<string | null>(null);
   const [isFetchingCustom, setIsFetchingCustom] = useState(false);
   const [availableModels, setAvailableModels] = useState<any[]>([]);
   const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'online' | 'offline'>('checking');
@@ -44,20 +45,28 @@ export default function App() {
   const fetchCustomModels = async () => {
     if (!customUrl) return;
     setIsFetchingCustom(true);
+    setCustomError(null);
     try {
       const res = await fetch(`/api/custom/models?url=${encodeURIComponent(customUrl)}`);
+      const data = await res.json();
+      
       if (res.ok) {
-        const data = await res.json();
         if (data.data && data.data.length > 0) {
           setCustomModels(data.data);
-          // Set first model as default if none selected
           if (!data.data.find((m: any) => m.id === customModel)) {
             setCustomModel(data.data[0].id);
           }
+        } else {
+          setCustomModels([]);
+          setCustomError("Nenhum modelo carregado no servidor.");
         }
+      } else {
+        setCustomModels([]);
+        setCustomError(data.error || `Erro ${res.status}`);
       }
-    } catch (e) {
+    } catch (e: any) {
       console.error("Failed to fetch custom models", e);
+      setCustomError("Erro de conexão com o proxy.");
     } finally {
       setIsFetchingCustom(false);
     }
@@ -336,14 +345,15 @@ export default function App() {
                   <select 
                     value={customModel}
                     onChange={(e) => setCustomModel(e.target.value)}
-                    className="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 text-sm rounded-lg p-2 outline-none focus:ring-2 focus:ring-purple-500"
+                    className={`w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 text-sm rounded-lg p-2 outline-none focus:ring-2 focus:ring-purple-500 ${customError ? 'border-red-300 dark:border-red-900/50' : ''}`}
+                    title={customError || ""}
                   >
                     {customModels.length > 0 ? (
                       customModels.map((m: any) => (
                         <option key={m.id} value={m.id}>{m.id}</option>
                       ))
                     ) : (
-                      <option value="">{isFetchingCustom ? "Buscando modelos..." : "Nenhum modelo encontrado"}</option>
+                      <option value="">{isFetchingCustom ? "Buscando modelos..." : (customError || "Nenhum modelo encontrado")}</option>
                     )}
                   </select>
                 </div>
