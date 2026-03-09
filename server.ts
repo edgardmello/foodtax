@@ -61,15 +61,18 @@ app.post("/api/receipts", async (req, res) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: modelToUse,
-          prompt: `Siga estas instruções rigorosamente:
-1. Localize o "VALOR TOTAL" ou "TOTAL R$" da nota fiscal.
+          prompt: `Analise esta nota fiscal brasileira e extraia os valores numéricos.
+IMPORTANTE: Para o valor total, use o "VALOR A PAGAR" ou "TOTAL LÍQUIDO" (após descontos). NÃO use o valor bruto se houver descontos.
+
+Siga estas instruções:
+1. Localize o "VALOR A PAGAR" ou "TOTAL R$" final.
 2. Localize a frase "Trib aprox" ou "Lei 12.741".
 3. Extraia o valor de "Federal" e o valor de "Estadual".
 
 Responda APENAS o JSON:
 {"total": 0.0, "taxFederal": 0.0, "taxState": 0.0}
 
-Não inclua explicações. Use 0.0 se não encontrar.`,
+Use 0.0 se não encontrar.`,
           images: [base64Data],
           stream: true
         })
@@ -130,16 +133,31 @@ Não inclua explicações. Use 0.0 se não encontrar.`,
       console.log(`[Ollama] Extracted JSON string:`, jsonString);
       try {
         data = JSON.parse(jsonString);
-        // Normalize field names (case insensitive-ish)
-        data = {
-          total: data.total || data.Total || 0,
-          taxFederal: data.taxFederal || data.tax_federal || data.taxFederalValue || 0,
-          taxState: data.taxState || data.tax_state || data.taxStateValue || 0
-        };
       } catch (e) {
-        console.error("[Ollama] JSON Parse Error:", e, "Original text:", responseText);
-        throw new Error("Failed to parse JSON response from Ollama.");
+        console.warn("[Ollama] JSON Parse failed, attempting regex extraction...");
+        // Fallback: extract numbers using regex if JSON parse fails
+        const totalMatch = responseText.match(/(?:VALOR A PAGAR|TOTAL R\$|Total|TOTAL).*?(\d+[,.]\d{2})/i);
+        const fedMatch = responseText.match(/(?:Federal|Fed).*?(\d+[,.]\d{2})/i);
+        const stateMatch = responseText.match(/(?:Estadual|Est).*?(\d+[,.]\d{2})/i);
+        
+        data = {
+          total: totalMatch ? parseFloat(totalMatch[1].replace(',', '.')) : 0,
+          taxFederal: fedMatch ? parseFloat(fedMatch[1].replace(',', '.')) : 0,
+          taxState: stateMatch ? parseFloat(stateMatch[1].replace(',', '.')) : 0
+        };
+        
+        if (data.total === 0) {
+           console.error("[Ollama] Regex extraction failed too. Original text:", responseText);
+           throw new Error("Failed to parse response from Ollama.");
+        }
       }
+
+      // Normalize field names (case insensitive-ish)
+      data = {
+        total: data.total || data.Total || 0,
+        taxFederal: data.taxFederal || data.tax_federal || data.taxFederalValue || 0,
+        taxState: data.taxState || data.tax_state || data.taxStateValue || 0
+      };
       console.log(`[Ollama] Final normalized data:`, data);
     } else {
       const response = await ai.models.generateContent({
@@ -152,7 +170,7 @@ Não inclua explicações. Use 0.0 se não encontrar.`,
             },
           },
           {
-            text: "Analise esta nota fiscal de mercado brasileira. Extraia o valor total da compra, o valor do imposto federal e o valor do imposto estadual. Se algum valor não for encontrado, retorne 0.",
+            text: "Analise esta nota fiscal de mercado brasileira. Extraia o valor total líquido da compra (VALOR A PAGAR), o valor do imposto federal e o valor do imposto estadual (indicados na Lei da Transparência/Lei 12.741). Se algum valor não for encontrado, retorne 0.",
           },
         ],
         config: {
