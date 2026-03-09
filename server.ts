@@ -168,8 +168,18 @@ async function processWithOpenAI(base64Data: string, url: string, model: string)
 
     if (!res.ok) throw new Error(`API error: ${res.status}`);
     const result = await res.json();
-    const content = result.choices[0].message.content;
-    const data = JSON.parse(content);
+    let content = result.choices[0].message.content;
+    
+    let data: any;
+    try {
+      // Extract JSON block if the model is talkative
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      const jsonString = jsonMatch ? jsonMatch[0] : content;
+      data = JSON.parse(jsonString);
+    } catch (e) {
+      console.error("[OpenAI-Comp] JSON Parse Error. Raw content:", content);
+      throw new Error("Failed to parse JSON from model response.");
+    }
 
     console.log("[OCR] Detecting regions for visual verification...");
     const { boxTotal, boxTax } = await detectReceiptRegions(base64Data);
