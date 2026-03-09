@@ -17,6 +17,7 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [aiEngine, setAiEngine] = useState<'gemini' | 'ollama'>('gemini');
   const [ollamaModel, setOllamaModel] = useState('qwen3.5:0.8b');
+  const [availableModels, setAvailableModels] = useState<any[]>([]);
   const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [showSuccess, setShowSuccess] = useState(false);
@@ -45,7 +46,14 @@ export default function App() {
     try {
       const res = await fetch('/api/ollama/check');
       if (res.ok) {
+        const data = await res.json();
         setOllamaStatus('online');
+        if (data.models && data.models.length > 0) {
+          setAvailableModels(data.models);
+          if (!data.models.find((m: any) => m.name === ollamaModel)) {
+            setOllamaModel(data.models[0].name);
+          }
+        }
       } else {
         setOllamaStatus('offline');
       }
@@ -147,6 +155,25 @@ export default function App() {
   const totalEstadual = receipts.reduce((acc, curr) => acc + curr.tax_state, 0);
   const totalImpostos = totalFederal + totalEstadual;
   const porcentagemImpostos = totalGasto > 0 ? ((totalImpostos / totalGasto) * 100).toFixed(1) : '0.0';
+
+  const maxFederal = Math.max(...receipts.map(r => r.tax_federal), 0);
+  const maxEstadual = Math.max(...receipts.map(r => r.tax_state), 0);
+
+  const getIntensityClass = (val: number, max: number, color: 'blue' | 'purple') => {
+    if (max === 0) return color === 'blue' ? 'text-blue-500 dark:text-blue-400' : 'text-purple-500 dark:text-purple-400';
+    const ratio = val / max;
+    if (color === 'blue') {
+      if (ratio > 0.75) return 'text-blue-700 dark:text-blue-300 font-bold';
+      if (ratio > 0.5) return 'text-blue-600 dark:text-blue-400 font-semibold';
+      if (ratio > 0.25) return 'text-blue-500 dark:text-blue-500 font-medium';
+      return 'text-blue-400 dark:text-blue-600';
+    } else {
+      if (ratio > 0.75) return 'text-purple-700 dark:text-purple-300 font-bold';
+      if (ratio > 0.5) return 'text-purple-600 dark:text-purple-400 font-semibold';
+      if (ratio > 0.25) return 'text-purple-500 dark:text-purple-500 font-medium';
+      return 'text-purple-400 dark:text-purple-600';
+    }
+  };
 
   const formatCurrency = (val: number) => 
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
@@ -259,9 +286,13 @@ export default function App() {
                     onChange={(e) => setOllamaModel(e.target.value)}
                     className="bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 text-sm rounded-lg focus:ring-blue-500 focus:border-blue-500 block p-2 outline-none"
                   >
-                    <option value="qwen3.5:0.8b">Qwen3.5 (0.8b)</option>
-                    <option value="qwen3.5:0.4b">Qwen3.5 (0.4b)</option>
-                    <option value="qwen3.5:0.2b">Qwen3.5 (0.2b)</option>
+                    {availableModels.length > 0 ? (
+                      availableModels.map((m: any) => (
+                        <option key={m.name} value={m.name}>{m.name}</option>
+                      ))
+                    ) : (
+                      <option value="qwen3.5:0.8b">Qwen3.5 (0.8b)</option>
+                    )}
                   </select>
                 </div>
               </div>
@@ -364,20 +395,31 @@ export default function App() {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
-                  className="flex flex-col items-center gap-4 w-full"
+                  className="flex flex-col items-center gap-6 w-full py-4"
                 >
-                  <div className="relative w-24 h-24 bg-emerald-100 dark:bg-emerald-900/30 rounded-2xl flex items-center justify-center overflow-hidden shadow-inner">
-                    <Receipt size={40} className="text-emerald-600 dark:text-emerald-400 opacity-40" />
+                  <div className="relative w-32 h-32 bg-emerald-50 dark:bg-emerald-900/20 rounded-3xl flex items-center justify-center overflow-hidden shadow-inner border border-emerald-100 dark:border-emerald-800/50">
+                    <motion.div
+                      animate={{ scale: [1, 1.1, 1], opacity: [0.5, 1, 0.5] }}
+                      transition={{ repeat: Infinity, duration: 2, ease: "easeInOut" }}
+                    >
+                      <Receipt size={48} className="text-emerald-500 dark:text-emerald-400" />
+                    </motion.div>
                     {/* Scanning line animation */}
                     <motion.div 
-                      className="absolute left-0 w-full h-1 bg-emerald-500 shadow-[0_0_12px_3px_rgba(16,185,129,0.6)]"
-                      animate={{ top: ['0%', '100%', '0%'] }}
-                      transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
+                      className="absolute left-0 w-full h-1.5 bg-gradient-to-r from-transparent via-emerald-400 to-transparent shadow-[0_0_15px_5px_rgba(52,211,153,0.5)] blur-[1px]"
+                      animate={{ top: ['-10%', '110%', '-10%'] }}
+                      transition={{ repeat: Infinity, duration: 2.5, ease: "linear" }}
                     />
                   </div>
-                  <div>
-                    <p className="text-lg font-medium text-gray-900 dark:text-gray-100">Analisando nota fiscal...</p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400 mt-1">A IA está extraindo os valores dos impostos</p>
+                  <div className="space-y-2">
+                    <p className="text-xl font-semibold text-gray-900 dark:text-gray-100 flex items-center justify-center gap-2">
+                      Analisando nota fiscal
+                      <motion.span
+                        animate={{ opacity: [0, 1, 0] }}
+                        transition={{ repeat: Infinity, duration: 1.5, times: [0, 0.5, 1] }}
+                      >...</motion.span>
+                    </p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">Extraindo valores e impostos com IA</p>
                   </div>
                 </motion.div>
               ) : showSuccess ? (
@@ -507,10 +549,10 @@ export default function App() {
                       <td className="p-4 text-right font-mono text-gray-900 dark:text-gray-100">
                         {formatCurrency(receipt.total)}
                       </td>
-                      <td className="p-4 text-right font-mono text-blue-600 dark:text-blue-400">
+                      <td className={`p-4 text-right font-mono ${getIntensityClass(receipt.tax_federal, maxFederal, 'blue')}`}>
                         {formatCurrency(receipt.tax_federal)}
                       </td>
-                      <td className="p-4 text-right font-mono text-purple-600 dark:text-purple-400">
+                      <td className={`p-4 text-right font-mono ${getIntensityClass(receipt.tax_state, maxEstadual, 'purple')}`}>
                         {formatCurrency(receipt.tax_state)}
                       </td>
                       <td className="p-4 text-center">
