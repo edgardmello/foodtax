@@ -20,7 +20,9 @@ export default function App() {
   const [aiEngine, setAiEngine] = useState<'gemini' | 'ollama' | 'custom'>('ollama');
   const [ollamaModel, setOllamaModel] = useState('qwen3.5:0.8b');
   const [customUrl, setCustomUrl] = useState('http://localhost:1234');
-  const [customModel, setCustomModel] = useState('lmstudio-community/qwen2.5-7b-instruct');
+  const [customModel, setCustomModel] = useState('');
+  const [customModels, setCustomModels] = useState<any[]>([]);
+  const [isFetchingCustom, setIsFetchingCustom] = useState(false);
   const [availableModels, setAvailableModels] = useState<any[]>([]);
   const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -38,6 +40,34 @@ export default function App() {
       setTheme('dark');
     }
   }, []);
+
+  const fetchCustomModels = async () => {
+    if (!customUrl) return;
+    setIsFetchingCustom(true);
+    try {
+      const res = await fetch(`/api/custom/models?url=${encodeURIComponent(customUrl)}`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.data && data.data.length > 0) {
+          setCustomModels(data.data);
+          // Set first model as default if none selected
+          if (!data.data.find((m: any) => m.id === customModel)) {
+            setCustomModel(data.data[0].id);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Failed to fetch custom models", e);
+    } finally {
+      setIsFetchingCustom(false);
+    }
+  };
+
+  useEffect(() => {
+    if (aiEngine === 'custom') {
+      fetchCustomModels();
+    }
+  }, [customUrl, aiEngine]);
 
   useEffect(() => {
     if (theme === 'dark') {
@@ -292,14 +322,30 @@ export default function App() {
                   />
                 </div>
                 <div className="flex-1 w-full space-y-2">
-                  <label className="text-xs font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wider">Nome do Modelo</label>
-                  <input 
-                    type="text"
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wider">Nome do Modelo</label>
+                    <button 
+                      onClick={fetchCustomModels} 
+                      className="text-[10px] text-purple-500 hover:underline flex items-center gap-1"
+                      disabled={isFetchingCustom}
+                    >
+                      {isFetchingCustom ? <Loader2 size={10} className="animate-spin" /> : <Download size={10} />}
+                      Atualizar
+                    </button>
+                  </div>
+                  <select 
                     value={customModel}
                     onChange={(e) => setCustomModel(e.target.value)}
-                    placeholder="model-name"
                     className="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 text-sm rounded-lg p-2 outline-none focus:ring-2 focus:ring-purple-500"
-                  />
+                  >
+                    {customModels.length > 0 ? (
+                      customModels.map((m: any) => (
+                        <option key={m.id} value={m.id}>{m.id}</option>
+                      ))
+                    ) : (
+                      <option value="">{isFetchingCustom ? "Buscando modelos..." : "Nenhum modelo encontrado"}</option>
+                    )}
+                  </select>
                 </div>
               </div>
             </motion.div>

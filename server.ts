@@ -329,6 +329,21 @@ app.get("/api/ollama/check", async (req, res) => {
   }
 });
 
+app.get("/api/custom/models", async (req, res) => {
+  try {
+    const { url } = req.query;
+    if (!url) return res.status(400).json({ error: "URL is required" });
+    
+    const response = await fetch(`${url}/v1/models`);
+    if (!response.ok) throw new Error("Server not responding correctly");
+    
+    const data = await response.json();
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch models from custom provider" });
+  }
+});
+
 app.post("/api/receipts", async (req, res) => {
   try {
     const { imageBase64, mimeType, engine, ollamaModel, customUrl, customModel } = req.body;
