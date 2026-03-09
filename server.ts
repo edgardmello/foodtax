@@ -61,25 +61,11 @@ app.post("/api/receipts", async (req, res) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: modelToUse,
-          prompt: `Analise a imagem desta nota fiscal de mercado brasileira.
-Extraia os seguintes valores numéricos:
-1. Valor total da compra
-2. Valor do imposto federal
-3. Valor do imposto estadual
-
-NÃO utilize passos de raciocínio, NÃO utilize tags de pensamento (thinking tags), NÃO explique o processo.
-Responda APENAS com um objeto JSON válido, sem nenhum texto adicional, usando exatamente este formato:
-{
-  "total": 0.0,
-  "taxFederal": 0.0,
-  "taxState": 0.0
-}
-Se não encontrar algum valor, use 0. Use ponto para casas decimais.`,
+          prompt: `Analise a nota fiscal na imagem. Extraia: total, taxFederal, taxState.
+Responda APENAS com JSON: {"total": 0.0, "taxFederal": 0.0, "taxState": 0.0}.
+Se não achar, use 0.`,
           images: [base64Data],
-          stream: true,
-          options: {
-            temperature: 0.1
-          }
+          stream: true
         })
       });
 
