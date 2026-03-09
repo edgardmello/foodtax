@@ -63,20 +63,20 @@ app.post("/api/receipts", async (req, res) => {
           model: modelToUse,
           prompt: `Analise a imagem desta nota fiscal de mercado brasileira.
 Extraia os seguintes valores numéricos:
-1. Valor total da compra (geralmente no final da nota)
-2. Valor do imposto federal (tributos federais)
-3. Valor do imposto estadual (tributos estaduais)
+1. Valor total da compra
+2. Valor do imposto federal
+3. Valor do imposto estadual
 
+NÃO utilize passos de raciocínio, NÃO utilize tags de pensamento (thinking tags), NÃO explique o processo.
 Responda APENAS com um objeto JSON válido, sem nenhum texto adicional, usando exatamente este formato:
 {
-  "total": 150.50,
-  "taxFederal": 10.20,
-  "taxState": 5.30
+  "total": 0.0,
+  "taxFederal": 0.0,
+  "taxState": 0.0
 }
 Se não encontrar algum valor, use 0. Use ponto para casas decimais.`,
           images: [base64Data],
-          stream: true, // Changed to true to see if it helps with some Ollama versions
-          format: "json",
+          stream: true,
           options: {
             temperature: 0.1
           }
@@ -115,6 +115,10 @@ Se não encontrar algum valor, use 0. Use ponto para casas decimais.`,
       
       console.log(`[Ollama] Accumulated response:`, responseText);
       
+      if (!responseText.trim()) {
+        throw new Error("Ollama returned an empty response. The model may not be vision-capable or failed to process the image.");
+      }
+
       // Tenta limpar a resposta caso o modelo retorne markdown (ex: ```json ... ```)
       const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
       let jsonString = responseText;
@@ -129,7 +133,12 @@ Se não encontrar algum valor, use 0. Use ponto para casas decimais.`,
       }
       
       console.log(`[Ollama] Parsed JSON string:`, jsonString);
-      data = JSON.parse(jsonString);
+      try {
+        data = JSON.parse(jsonString);
+      } catch (e) {
+        console.error("[Ollama] JSON Parse Error:", e);
+        throw new Error("Failed to parse JSON response from Ollama.");
+      }
       console.log(`[Ollama] Final parsed data:`, data);
     } else {
       const response = await ai.models.generateContent({
