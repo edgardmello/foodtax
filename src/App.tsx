@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { UploadCloud, Receipt, Trash2, DollarSign, Landmark, PieChart, Loader2, Download, Cpu, Cloud } from 'lucide-react';
+import { UploadCloud, Receipt, Trash2, DollarSign, Landmark, PieChart, Loader2, Download, Cpu, Cloud, Percent, BarChart as BarChartIcon } from 'lucide-react';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+import { motion, AnimatePresence } from 'motion/react';
 
 interface ReceiptData {
   id: number;
@@ -101,9 +103,23 @@ export default function App() {
   const totalGasto = receipts.reduce((acc, curr) => acc + curr.total, 0);
   const totalFederal = receipts.reduce((acc, curr) => acc + curr.tax_federal, 0);
   const totalEstadual = receipts.reduce((acc, curr) => acc + curr.tax_state, 0);
+  const totalImpostos = totalFederal + totalEstadual;
+  const porcentagemImpostos = totalGasto > 0 ? ((totalImpostos / totalGasto) * 100).toFixed(1) : '0.0';
 
   const formatCurrency = (val: number) => 
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
+
+  // Prepare data for the chart (grouping by date)
+  const chartData = [...receipts].reverse().reduce((acc: any[], curr) => {
+    const date = new Date(curr.created_at).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+    const existing = acc.find((item: any) => item.date === date);
+    if (existing) {
+      existing.total += curr.total;
+    } else {
+      acc.push({ date, total: curr.total });
+    }
+    return acc;
+  }, []);
 
   const exportCSV = () => {
     const headers = ['ID', 'Data', 'Total', 'Federal', 'Estadual'];
@@ -155,7 +171,7 @@ export default function App() {
         </header>
 
         {/* Dashboard Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between">
             <div className="flex items-center gap-3 text-gray-500 mb-4">
               <div className="p-2 bg-emerald-50 text-emerald-600 rounded-lg">
@@ -185,27 +201,54 @@ export default function App() {
             </div>
             <div className="text-3xl font-light tracking-tight">{formatCurrency(totalEstadual)}</div>
           </div>
+
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 flex flex-col justify-between">
+            <div className="flex items-center gap-3 text-gray-500 mb-4">
+              <div className="p-2 bg-orange-50 text-orange-600 rounded-lg">
+                <Percent size={20} />
+              </div>
+              <span className="font-medium">Carga Tributária</span>
+            </div>
+            <div className="text-3xl font-light tracking-tight">{porcentagemImpostos}%</div>
+          </div>
         </div>
 
         {/* Upload Area */}
-        <div 
-          className={`relative border-2 border-dashed rounded-2xl p-12 text-center transition-all duration-200 cursor-pointer overflow-hidden
-            ${isDragging ? 'border-emerald-500 bg-emerald-50 scale-[1.02] shadow-lg' : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'}
-            ${isProcessing ? 'opacity-50 pointer-events-none' : ''}
+        <motion.div 
+          className={`relative border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer overflow-hidden
+            ${isDragging ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'}
+            ${isProcessing ? 'pointer-events-none' : ''}
           `}
+          animate={{
+            scale: isDragging ? 1.02 : 1,
+            boxShadow: isDragging ? '0 10px 25px -5px rgba(16, 185, 129, 0.2)' : '0 0px 0px 0px rgba(0,0,0,0)',
+          }}
+          transition={{ type: "spring", stiffness: 300, damping: 20 }}
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
         >
-          {isDragging && (
-            <div className="absolute inset-0 bg-emerald-500/10 flex items-center justify-center z-10 backdrop-blur-[2px]">
-              <div className="bg-white px-6 py-3 rounded-full shadow-md text-emerald-600 font-semibold flex items-center gap-2 animate-bounce">
-                <UploadCloud size={20} />
-                Solte a imagem aqui!
-              </div>
-            </div>
-          )}
+          <AnimatePresence>
+            {isDragging && !isProcessing && (
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="absolute inset-0 bg-emerald-500/10 flex items-center justify-center z-10 backdrop-blur-[2px]"
+              >
+                <motion.div 
+                  animate={{ y: [0, -10, 0] }}
+                  transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
+                  className="bg-white px-6 py-3 rounded-full shadow-md text-emerald-600 font-semibold flex items-center gap-2"
+                >
+                  <UploadCloud size={20} />
+                  Solte a imagem aqui!
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -215,27 +258,86 @@ export default function App() {
           />
           
           <div className="flex flex-col items-center gap-4">
-            {isProcessing ? (
-              <>
-                <Loader2 size={48} className="text-emerald-500 animate-spin" />
-                <div>
-                  <p className="text-lg font-medium text-gray-900">Analisando nota fiscal...</p>
-                  <p className="text-sm text-gray-500 mt-1">A IA está extraindo os valores dos impostos</p>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="p-4 bg-gray-100 rounded-full text-gray-500">
-                  <UploadCloud size={32} />
-                </div>
-                <div>
-                  <p className="text-lg font-medium text-gray-900">Clique ou arraste a nota fiscal aqui</p>
-                  <p className="text-sm text-gray-500 mt-1">Formatos suportados: JPG, PNG, WEBP</p>
-                </div>
-              </>
-            )}
+            <AnimatePresence mode="wait">
+              {isProcessing ? (
+                <motion.div 
+                  key="processing"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="flex flex-col items-center gap-4 w-full"
+                >
+                  <div className="relative w-24 h-24 bg-emerald-100 rounded-2xl flex items-center justify-center overflow-hidden shadow-inner">
+                    <Receipt size={40} className="text-emerald-600 opacity-40" />
+                    {/* Scanning line animation */}
+                    <motion.div 
+                      className="absolute left-0 w-full h-1 bg-emerald-500 shadow-[0_0_12px_3px_rgba(16,185,129,0.6)]"
+                      animate={{ top: ['0%', '100%', '0%'] }}
+                      transition={{ repeat: Infinity, duration: 2, ease: "linear" }}
+                    />
+                  </div>
+                  <div>
+                    <p className="text-lg font-medium text-gray-900">Analisando nota fiscal...</p>
+                    <p className="text-sm text-gray-500 mt-1">A IA está extraindo os valores dos impostos</p>
+                  </div>
+                </motion.div>
+              ) : (
+                <motion.div 
+                  key="idle"
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -10 }}
+                  className="flex flex-col items-center gap-4"
+                >
+                  <div className="p-4 bg-gray-100 rounded-full text-gray-500">
+                    <UploadCloud size={32} />
+                  </div>
+                  <div>
+                    <p className="text-lg font-medium text-gray-900">Clique ou arraste a nota fiscal aqui</p>
+                    <p className="text-sm text-gray-500 mt-1">Formatos suportados: JPG, PNG, WEBP</p>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
-        </div>
+        </motion.div>
+
+        {/* Chart Section */}
+        {receipts.length > 0 && (
+          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+            <h2 className="text-lg font-semibold flex items-center gap-2 mb-6">
+              <BarChartIcon size={20} className="text-gray-400" />
+              Evolução de Gastos
+            </h2>
+            <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                  <XAxis 
+                    dataKey="date" 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#9ca3af', fontSize: 12 }} 
+                    dy={10} 
+                  />
+                  <YAxis 
+                    axisLine={false} 
+                    tickLine={false} 
+                    tick={{ fill: '#9ca3af', fontSize: 12 }} 
+                    tickFormatter={(value) => `R$ ${value}`} 
+                  />
+                  <Tooltip 
+                    cursor={{ fill: '#f3f4f6' }}
+                    contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                    formatter={(value: number) => [formatCurrency(value), 'Total Gasto']}
+                    labelStyle={{ color: '#6b7280', fontWeight: 500, marginBottom: '4px' }}
+                  />
+                  <Bar dataKey="total" fill="#10b981" radius={[4, 4, 0, 0]} maxBarSize={50} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        )}
 
         {/* History Table */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
@@ -264,7 +366,7 @@ export default function App() {
               <table className="w-full text-left border-collapse">
                 <thead>
                   <tr className="bg-gray-50/50 text-gray-500 text-sm uppercase tracking-wider">
-                    <th className="p-4 font-medium">Data</th>
+                    <th className="p-4 font-medium">Data de Processamento</th>
                     <th className="p-4 font-medium text-right">Total</th>
                     <th className="p-4 font-medium text-right">Federal</th>
                     <th className="p-4 font-medium text-right">Estadual</th>
