@@ -8,6 +8,8 @@ interface ReceiptData {
   total: number;
   tax_federal: number;
   tax_state: number;
+  img_total?: string;
+  img_tax?: string;
   created_at: string;
 }
 
@@ -15,13 +17,14 @@ export default function App() {
   const [receipts, setReceipts] = useState<ReceiptData[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [aiEngine, setAiEngine] = useState<'gemini' | 'ollama'>('gemini');
+  const [aiEngine, setAiEngine] = useState<'gemini' | 'ollama'>('ollama');
   const [ollamaModel, setOllamaModel] = useState('qwen3.5:0.8b');
   const [availableModels, setAvailableModels] = useState<any[]>([]);
   const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [showSuccess, setShowSuccess] = useState(false);
   const [showFallback, setShowFallback] = useState(false);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -572,10 +575,30 @@ export default function App() {
                         })}
                       </td>
                       <td className="p-4 text-right font-mono text-gray-900 dark:text-gray-100">
-                        {formatCurrency(receipt.total)}
+                        <div className="flex flex-col items-end gap-1">
+                          {formatCurrency(receipt.total)}
+                          {receipt.img_total && (
+                            <img 
+                              src={`data:image/jpeg;base64,${receipt.img_total}`} 
+                              alt="Proof Total" 
+                              className="h-8 rounded border border-gray-200 dark:border-gray-700 cursor-zoom-in hover:opacity-80 transition-opacity"
+                              onClick={() => setSelectedImage(receipt.img_total || null)}
+                            />
+                          )}
+                        </div>
                       </td>
                       <td className={`p-4 text-right font-mono ${getIntensityClass(receipt.tax_federal, maxFederal, 'blue')}`}>
-                        {formatCurrency(receipt.tax_federal)}
+                        <div className="flex flex-col items-end gap-1">
+                          {formatCurrency(receipt.tax_federal)}
+                          {receipt.img_tax && (
+                            <img 
+                              src={`data:image/jpeg;base64,${receipt.img_tax}`} 
+                              alt="Proof Tax" 
+                              className="h-8 rounded border border-gray-200 dark:border-gray-700 cursor-zoom-in hover:opacity-80 transition-opacity"
+                              onClick={() => setSelectedImage(receipt.img_tax || null)}
+                            />
+                          )}
+                        </div>
                       </td>
                       <td className={`p-4 text-right font-mono ${getIntensityClass(receipt.tax_state, maxEstadual, 'purple')}`}>
                         {formatCurrency(receipt.tax_state)}
@@ -598,6 +621,35 @@ export default function App() {
         </div>
 
       </div>
+
+      {/* Image Zoom Modal */}
+      <AnimatePresence>
+        {selectedImage && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setSelectedImage(null)}
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm cursor-zoom-out"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white dark:bg-gray-900 p-2 rounded-2xl shadow-2xl max-w-2xl w-full"
+            >
+              <img 
+                src={`data:image/jpeg;base64,${selectedImage}`} 
+                alt="Zoomed Proof" 
+                className="w-full h-auto rounded-xl"
+              />
+              <div className="p-4 text-center">
+                <p className="text-sm text-gray-500">Recorte da nota fiscal para conferência</p>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
