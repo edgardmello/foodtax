@@ -59,10 +59,25 @@ app.post("/api/receipts", async (req, res) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: modelToUse,
-          prompt: "Analise esta nota fiscal de mercado brasileira. Extraia o valor total da compra, o valor do imposto federal e o valor do imposto estadual. Retorne APENAS um objeto JSON válido com as chaves 'total', 'taxFederal' e 'taxState', contendo apenas números (use ponto para decimais). Se algum valor não for encontrado, retorne 0.",
+          prompt: `Analise a imagem desta nota fiscal de mercado brasileira.
+Extraia os seguintes valores numéricos:
+1. Valor total da compra (geralmente no final da nota)
+2. Valor do imposto federal (tributos federais)
+3. Valor do imposto estadual (tributos estaduais)
+
+Responda APENAS com um objeto JSON válido, sem nenhum texto adicional, usando exatamente este formato:
+{
+  "total": 150.50,
+  "taxFederal": 10.20,
+  "taxState": 5.30
+}
+Se não encontrar algum valor, use 0. Use ponto para casas decimais.`,
           images: [base64Data],
           stream: false,
-          format: "json"
+          format: "json",
+          options: {
+            temperature: 0.1
+          }
         })
       });
 
@@ -71,7 +86,21 @@ app.post("/api/receipts", async (req, res) => {
       }
 
       const ollamaJson = await ollamaRes.json();
-      data = JSON.parse(ollamaJson.response || "{}");
+      let responseText = ollamaJson.response || "{}";
+      
+      // Tenta limpar a resposta caso o modelo retorne markdown (ex: ```json ... ```)
+      const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      if (jsonMatch) {
+        responseText = jsonMatch[1];
+      } else {
+        const start = responseText.indexOf('{');
+        const end = responseText.lastIndexOf('}');
+        if (start !== -1 && end !== -1) {
+          responseText = responseText.substring(start, end + 1);
+        }
+      }
+      
+      data = JSON.parse(responseText);
     } else {
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",

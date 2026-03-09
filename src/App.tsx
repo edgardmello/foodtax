@@ -87,28 +87,29 @@ export default function App() {
 
     setIsProcessing(true);
     try {
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64 = reader.result as string;
-        
-        const res = await fetch('/api/receipts', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            imageBase64: base64,
-            mimeType: file.type,
-            engine: aiEngine,
-            ollamaModel: ollamaModel
-          })
-        });
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      
+      const res = await fetch('/api/receipts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          imageBase64: base64,
+          mimeType: file.type,
+          engine: aiEngine,
+          ollamaModel: ollamaModel
+        })
+      });
 
-        if (!res.ok) throw new Error('Falha ao processar nota fiscal');
-        
-        await fetchReceipts();
-        setShowSuccess(true);
-        setTimeout(() => setShowSuccess(false), 3000);
-      };
-      reader.readAsDataURL(file);
+      if (!res.ok) throw new Error('Falha ao processar nota fiscal');
+      
+      await fetchReceipts();
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 3000);
     } catch (error) {
       console.error(error);
       alert('Erro ao processar a nota fiscal. Tente novamente.');
