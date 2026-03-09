@@ -25,9 +25,21 @@ db.exec(`
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+app.get("/api/ollama/check", async (req, res) => {
+  try {
+    const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
+    const response = await fetch(`${ollamaUrl}/api/tags`);
+    if (!response.ok) throw new Error("Ollama not responding");
+    const data = await response.json();
+    res.json({ status: "ok", models: data.models });
+  } catch (error) {
+    res.status(500).json({ status: "error", message: "Ollama is not accessible" });
+  }
+});
+
 app.post("/api/receipts", async (req, res) => {
   try {
-    const { imageBase64, mimeType, engine } = req.body;
+    const { imageBase64, mimeType, engine, ollamaModel } = req.body;
     if (!imageBase64) {
       return res.status(400).json({ error: "No image provided" });
     }
@@ -41,11 +53,12 @@ app.post("/api/receipts", async (req, res) => {
 
     if (engine === "ollama") {
       const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
+      const modelToUse = ollamaModel || "qwen3.5:0.8b";
       const ollamaRes = await fetch(`${ollamaUrl}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: "qwen3.5:2b-bf16",
+          model: modelToUse,
           prompt: "Analise esta nota fiscal de mercado brasileira. Extraia o valor total da compra, o valor do imposto federal e o valor do imposto estadual. Retorne APENAS um objeto JSON válido com as chaves 'total', 'taxFederal' e 'taxState', contendo apenas números (use ponto para decimais). Se algum valor não for encontrado, retorne 0.",
           images: [base64Data],
           stream: false,
