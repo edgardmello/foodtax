@@ -27,7 +27,7 @@ const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 app.post("/api/receipts", async (req, res) => {
   try {
-    const { imageBase64, mimeType } = req.body;
+    const { imageBase64, mimeType, engine } = req.body;
     if (!imageBase64) {
       return res.status(400).json({ error: "No image provided" });
     }
@@ -37,34 +37,59 @@ app.post("/api/receipts", async (req, res) => {
       ? imageBase64.split(",")[1] 
       : imageBase64;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: [
-        {
-          inlineData: {
-            data: base64Data,
-            mimeType: mimeType || "image/jpeg",
-          },
-        },
-        {
-          text: "Analise esta nota fiscal de mercado brasileira. Extraia o valor total da compra, o valor do imposto federal e o valor do imposto estadual. Se algum valor não for encontrado, retorne 0.",
-        },
-      ],
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            total: { type: Type.NUMBER, description: "Valor total da nota fiscal" },
-            taxFederal: { type: Type.NUMBER, description: "Valor do imposto federal pago" },
-            taxState: { type: Type.NUMBER, description: "Valor do imposto estadual pago" },
-          },
-          required: ["total", "taxFederal", "taxState"],
-        },
-      },
-    });
+    let data: any = {};
 
-    const data = JSON.parse(response.text || "{}");
+    if (engine === "ollama") {
+      const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
+      const ollamaRes = await fetch(`${ollamaUrl}/api/generate`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: "qwen3.5:2b-bf16",
+          prompt: "Analise esta nota fiscal de mercado brasileira. Extraia o valor total da compra, o valor do imposto federal e o valor do imposto estadual. Retorne APENAS um objeto JSON válido com as chaves 'total', 'taxFederal' e 'taxState', contendo apenas números (use ponto para decimais). Se algum valor não for encontrado, retorne 0.",
+          images: [base64Data],
+          stream: false,
+          format: "json"
+        })
+      });
+
+      if (!ollamaRes.ok) {
+        throw new Error(`Ollama API error: ${ollamaRes.statusText}`);
+      }
+
+      const ollamaJson = await ollamaRes.json();
+      data = JSON.parse(ollamaJson.response || "{}");
+    } else {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: [
+          {
+            inlineData: {
+              data: base64Data,
+              mimeType: mimeType || "image/jpeg",
+            },
+          },
+          {
+            text: "Analise esta nota fiscal de mercado brasileira. Extraia o valor total da compra, o valor do imposto federal e o valor do imposto estadual. Se algum valor não for encontrado, retorne 0.",
+          },
+        ],
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: Type.OBJECT,
+            properties: {
+              total: { type: Type.NUMBER, description: "Valor total da nota fiscal" },
+              taxFederal: { type: Type.NUMBER, description: "Valor do imposto federal pago" },
+              taxState: { type: Type.NUMBER, description: "Valor do imposto estadual pago" },
+            },
+            required: ["total", "taxFederal", "taxState"],
+          },
+        },
+      });
+
+      data = JSON.parse(response.text || "{}");
+    }
+
     const stmt = db.prepare(
       "INSERT INTO receipts (total, tax_federal, tax_state) VALUES (?, ?, ?)"
     );

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { UploadCloud, Receipt, Trash2, DollarSign, Landmark, PieChart, Loader2 } from 'lucide-react';
+import { UploadCloud, Receipt, Trash2, DollarSign, Landmark, PieChart, Loader2, Download, Cpu, Cloud } from 'lucide-react';
 
 interface ReceiptData {
   id: number;
@@ -13,6 +13,7 @@ export default function App() {
   const [receipts, setReceipts] = useState<ReceiptData[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [aiEngine, setAiEngine] = useState<'gemini' | 'ollama'>('gemini');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -46,7 +47,8 @@ export default function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             imageBase64: base64,
-            mimeType: file.type
+            mimeType: file.type,
+            engine: aiEngine
           })
         });
 
@@ -103,14 +105,52 @@ export default function App() {
   const formatCurrency = (val: number) => 
     new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(val);
 
+  const exportCSV = () => {
+    const headers = ['ID', 'Data', 'Total', 'Federal', 'Estadual'];
+    const rows = receipts.map(r => [
+      r.id,
+      new Date(r.created_at).toLocaleString('pt-BR'),
+      r.total,
+      r.tax_federal,
+      r.tax_state
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," 
+      + headers.join(",") + "\n" 
+      + rows.map(e => e.join(",")).join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", "notas_fiscais.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="min-h-screen bg-[#f5f5f5] text-gray-900 font-sans p-4 md:p-8">
       <div className="max-w-5xl mx-auto space-y-8">
         
-        <header className="flex items-center justify-between">
+        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
             <h1 className="text-3xl font-semibold tracking-tight">Impostos de Mercado</h1>
             <p className="text-gray-500 mt-1">Extração de dados via IA para notas fiscais</p>
+          </div>
+          
+          <div className="flex items-center gap-1 bg-white p-1 rounded-xl border border-gray-200 shadow-sm self-start md:self-auto">
+            <button 
+              onClick={() => setAiEngine('gemini')}
+              className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors ${aiEngine === 'gemini' ? 'bg-emerald-50 text-emerald-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+            >
+              <Cloud size={16} />
+              Gemini
+            </button>
+            <button 
+              onClick={() => setAiEngine('ollama')}
+              className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors ${aiEngine === 'ollama' ? 'bg-blue-50 text-blue-700' : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+            >
+              <Cpu size={16} />
+              Ollama Local
+            </button>
           </div>
         </header>
 
@@ -149,8 +189,8 @@ export default function App() {
 
         {/* Upload Area */}
         <div 
-          className={`relative border-2 border-dashed rounded-2xl p-12 text-center transition-colors cursor-pointer
-            ${isDragging ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'}
+          className={`relative border-2 border-dashed rounded-2xl p-12 text-center transition-all duration-200 cursor-pointer overflow-hidden
+            ${isDragging ? 'border-emerald-500 bg-emerald-50 scale-[1.02] shadow-lg' : 'border-gray-200 bg-white hover:border-gray-300 hover:bg-gray-50'}
             ${isProcessing ? 'opacity-50 pointer-events-none' : ''}
           `}
           onDragOver={handleDragOver}
@@ -158,6 +198,14 @@ export default function App() {
           onDrop={handleDrop}
           onClick={() => fileInputRef.current?.click()}
         >
+          {isDragging && (
+            <div className="absolute inset-0 bg-emerald-500/10 flex items-center justify-center z-10 backdrop-blur-[2px]">
+              <div className="bg-white px-6 py-3 rounded-full shadow-md text-emerald-600 font-semibold flex items-center gap-2 animate-bounce">
+                <UploadCloud size={20} />
+                Solte a imagem aqui!
+              </div>
+            </div>
+          )}
           <input 
             type="file" 
             ref={fileInputRef} 
@@ -191,11 +239,20 @@ export default function App() {
 
         {/* History Table */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
-          <div className="p-6 border-b border-gray-100">
+          <div className="p-6 border-b border-gray-100 flex items-center justify-between">
             <h2 className="text-lg font-semibold flex items-center gap-2">
               <Receipt size={20} className="text-gray-400" />
               Histórico de Notas
             </h2>
+            {receipts.length > 0 && (
+              <button
+                onClick={exportCSV}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white text-sm font-medium rounded-lg hover:bg-gray-800 transition-colors"
+              >
+                <Download size={16} />
+                Exportar CSV
+              </button>
+            )}
           </div>
           
           {receipts.length === 0 ? (
