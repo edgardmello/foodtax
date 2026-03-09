@@ -21,6 +21,7 @@ export default function App() {
   const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [showSuccess, setShowSuccess] = useState(false);
+  const [showFallback, setShowFallback] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -107,9 +108,16 @@ export default function App() {
 
       if (!res.ok) throw new Error('Falha ao processar nota fiscal');
       
+      const result = await res.json();
       await fetchReceipts();
-      setShowSuccess(true);
-      setTimeout(() => setShowSuccess(false), 3000);
+
+      if (result.fallback) {
+        setShowFallback(true);
+        setTimeout(() => setShowFallback(false), 5000);
+      } else {
+        setShowSuccess(true);
+        setTimeout(() => setShowSuccess(false), 3000);
+      }
     } catch (error) {
       console.error(error);
       alert('Erro ao processar a nota fiscal. Tente novamente.');
@@ -421,6 +429,22 @@ export default function App() {
                       >...</motion.span>
                     </p>
                     <p className="text-sm text-gray-500 dark:text-gray-400">Extraindo valores e impostos com IA</p>
+                  </div>
+                </motion.div>
+              ) : showFallback ? (
+                <motion.div 
+                  key="fallback"
+                  initial={{ opacity: 0, scale: 0.8 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.8 }}
+                  className="flex flex-col items-center gap-4 text-amber-600 dark:text-amber-400"
+                >
+                  <div className="p-4 bg-amber-100 dark:bg-amber-900/30 rounded-full">
+                    <Cloud size={48} />
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-lg font-medium">Processado via Gemini (Fallback)</p>
+                    <p className="text-sm opacity-80 text-center">O Ollama não conseguiu extrair os dados desta nota.</p>
                   </div>
                 </motion.div>
               ) : showSuccess ? (
