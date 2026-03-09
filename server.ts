@@ -75,7 +75,7 @@ Responda APENAS com um objeto JSON válido, sem nenhum texto adicional, usando e
 }
 Se não encontrar algum valor, use 0. Use ponto para casas decimais.`,
           images: [base64Data],
-          stream: false,
+          stream: true, // Changed to true to see if it helps with some Ollama versions
           format: "json",
           options: {
             temperature: 0.1
@@ -89,25 +89,47 @@ Se não encontrar algum valor, use 0. Use ponto para casas decimais.`,
         throw new Error(`Ollama API error: ${ollamaRes.statusText}`);
       }
 
-      const ollamaJson = await ollamaRes.json();
-      console.log(`[Ollama] Raw response:`, ollamaJson.response);
+      // Read streaming response
+      const reader = ollamaRes.body?.getReader();
+      let responseText = "";
+      if (reader) {
+        const decoder = new TextDecoder();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          // Ollama streaming returns multiple JSON objects, one per line
+          const lines = chunk.split('\n');
+          for (const line of lines) {
+            if (line.trim()) {
+              try {
+                const json = JSON.parse(line);
+                if (json.response) responseText += json.response;
+              } catch (e) {
+                console.error("Error parsing streaming chunk:", e);
+              }
+            }
+          }
+        }
+      }
       
-      let responseText = ollamaJson.response || "{}";
+      console.log(`[Ollama] Accumulated response:`, responseText);
       
       // Tenta limpar a resposta caso o modelo retorne markdown (ex: ```json ... ```)
       const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      let jsonString = responseText;
       if (jsonMatch) {
-        responseText = jsonMatch[1];
+        jsonString = jsonMatch[1];
       } else {
         const start = responseText.indexOf('{');
         const end = responseText.lastIndexOf('}');
         if (start !== -1 && end !== -1) {
-          responseText = responseText.substring(start, end + 1);
+          jsonString = responseText.substring(start, end + 1);
         }
       }
       
-      console.log(`[Ollama] Parsed JSON string:`, responseText);
-      data = JSON.parse(responseText);
+      console.log(`[Ollama] Parsed JSON string:`, jsonString);
+      data = JSON.parse(jsonString);
       console.log(`[Ollama] Final parsed data:`, data);
     } else {
       const response = await ai.models.generateContent({
