@@ -54,6 +54,8 @@ app.post("/api/receipts", async (req, res) => {
     if (engine === "ollama") {
       const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
       const modelToUse = ollamaModel || "qwen3.5:0.8b";
+      console.log(`[Ollama] Using model: ${modelToUse} at ${ollamaUrl}`);
+      
       const ollamaRes = await fetch(`${ollamaUrl}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -82,10 +84,14 @@ Se não encontrar algum valor, use 0. Use ponto para casas decimais.`,
       });
 
       if (!ollamaRes.ok) {
+        const errorText = await ollamaRes.text();
+        console.error(`[Ollama] API error: ${ollamaRes.status} - ${errorText}`);
         throw new Error(`Ollama API error: ${ollamaRes.statusText}`);
       }
 
       const ollamaJson = await ollamaRes.json();
+      console.log(`[Ollama] Raw response:`, ollamaJson.response);
+      
       let responseText = ollamaJson.response || "{}";
       
       // Tenta limpar a resposta caso o modelo retorne markdown (ex: ```json ... ```)
@@ -100,7 +106,9 @@ Se não encontrar algum valor, use 0. Use ponto para casas decimais.`,
         }
       }
       
+      console.log(`[Ollama] Parsed JSON string:`, responseText);
       data = JSON.parse(responseText);
+      console.log(`[Ollama] Final parsed data:`, data);
     } else {
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
