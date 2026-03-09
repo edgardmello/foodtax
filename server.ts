@@ -30,9 +30,9 @@ db.exec(`
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
 async function processWithGemini(base64Data: string, mimeType: string) {
-  console.log("[Gemini] Processing receipt with visual verification...");
+  console.log("[Gemini] Processing receipt...");
   const response = await ai.models.generateContent({
-    model: "gemini-1.5-flash",
+    model: "gemini-1.5-flash", // Tentando manter o padrão, mas se falhar o Tesseract assume
     contents: [
       {
         inlineData: {
@@ -154,19 +154,24 @@ async function processWithOpenAI(base64Data: string, url: string, model: string)
           {
             role: "user",
             content: [
-              { type: "text", text: "Analise esta nota fiscal brasileira e extraia o JSON: {\"total\": 0.0, \"taxFederal\": 0.0, \"taxState\": 0.0}" },
+              { type: "text", text: "Analise esta nota fiscal brasileira e extraia o JSON: {\"total\": 0.0, \"taxFederal\": 0.0, \"taxState\": 0.0}. Responda apenas o JSON." },
               { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
             ]
           }
         ],
-        response_format: { type: "json_object" }
+        // No response_format for better compatibility with local models
+        temperature: 0.1
       }),
       signal: controller.signal
     });
 
     clearTimeout(timeoutId);
 
-    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    if (!res.ok) {
+      const errorText = await res.text();
+      console.error(`[OpenAI-Comp] API error: ${res.status}. Response:`, errorText);
+      throw new Error(`API error: ${res.status}`);
+    }
     const result = await res.json();
     let content = result.choices[0].message.content;
     
