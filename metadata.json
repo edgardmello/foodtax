@@ -1,0 +1,5 @@
+{
+  "name": "Tax Scanner",
+  "description": "OCR de notas fiscais de mercado para extrair impostos federais e estaduais.",
+  "requestFramePermissions": []
+}
