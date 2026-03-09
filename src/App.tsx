@@ -17,8 +17,10 @@ export default function App() {
   const [receipts, setReceipts] = useState<ReceiptData[]>([]);
   const [isDragging, setIsDragging] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
-  const [aiEngine, setAiEngine] = useState<'gemini' | 'ollama'>('ollama');
+  const [aiEngine, setAiEngine] = useState<'gemini' | 'ollama' | 'custom'>('ollama');
   const [ollamaModel, setOllamaModel] = useState('qwen3.5:0.8b');
+  const [customUrl, setCustomUrl] = useState('http://localhost:1234');
+  const [customModel, setCustomModel] = useState('lmstudio-community/qwen2.5-7b-instruct');
   const [availableModels, setAvailableModels] = useState<any[]>([]);
   const [ollamaStatus, setOllamaStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
@@ -105,7 +107,9 @@ export default function App() {
           imageBase64: base64,
           mimeType: file.type,
           engine: aiEngine,
-          ollamaModel: ollamaModel
+          ollamaModel: ollamaModel,
+          customUrl: customUrl,
+          customModel: customModel
         })
       });
 
@@ -247,7 +251,14 @@ export default function App() {
                 className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors ${aiEngine === 'ollama' ? 'bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800'}`}
               >
                 <Cpu size={16} />
-                Ollama Local
+                Ollama
+              </button>
+              <button 
+                onClick={() => handleEngineSwitch('custom')}
+                className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors ${aiEngine === 'custom' ? 'bg-purple-50 dark:bg-purple-500/10 text-purple-700 dark:text-purple-400' : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800'}`}
+              >
+                <Landmark size={16} />
+                Local (OpenAI)
               </button>
             </div>
 
@@ -261,7 +272,39 @@ export default function App() {
           </div>
         </header>
 
-        {/* Ollama Status & Model Selection */}
+        <AnimatePresence>
+          {aiEngine === 'custom' && (
+            <motion.div 
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="bg-purple-50/50 dark:bg-purple-900/10 border border-purple-100 dark:border-purple-800/30 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center gap-4">
+                <div className="flex-1 w-full space-y-2">
+                  <label className="text-xs font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wider">URL do Servidor (OpenAI-Compatible)</label>
+                  <input 
+                    type="text"
+                    value={customUrl}
+                    onChange={(e) => setCustomUrl(e.target.value)}
+                    placeholder="http://localhost:1234"
+                    className="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 text-sm rounded-lg p-2 outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+                <div className="flex-1 w-full space-y-2">
+                  <label className="text-xs font-semibold text-purple-600 dark:text-purple-400 uppercase tracking-wider">Nome do Modelo</label>
+                  <input 
+                    type="text"
+                    value={customModel}
+                    onChange={(e) => setCustomModel(e.target.value)}
+                    placeholder="model-name"
+                    className="w-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-200 text-sm rounded-lg p-2 outline-none focus:ring-2 focus:ring-purple-500"
+                  />
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
         <AnimatePresence>
           {aiEngine === 'ollama' && (
             <motion.div 

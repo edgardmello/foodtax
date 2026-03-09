@@ -138,6 +138,55 @@ Se não encontrar um valor, use 0.`,
   return { ...data, imgTotal: imgTotalBase64, imgTax: imgTaxBase64 };
 }
 
+async function processWithOpenAI(base64Data: string, url: string, model: string) {
+  console.log(`[OpenAI-Comp] Using URL: ${url} and model: ${model}`);
+  
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    const res = await fetch(`${url}/v1/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: model,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: "Analise esta nota fiscal brasileira e extraia o JSON: {\"total\": 0.0, \"taxFederal\": 0.0, \"taxState\": 0.0}" },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
+            ]
+          }
+        ],
+        response_format: { type: "json_object" }
+      }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!res.ok) throw new Error(`API error: ${res.status}`);
+    const result = await res.json();
+    const content = result.choices[0].message.content;
+    const data = JSON.parse(content);
+
+    console.log("[OCR] Detecting regions for visual verification...");
+    const { boxTotal, boxTax } = await detectReceiptRegions(base64Data);
+    const { imgTotal, imgTax } = await cropRegions(base64Data, boxTotal, boxTax);
+
+    return {
+      total: data.total || 0,
+      taxFederal: data.taxFederal || 0,
+      taxState: data.taxState || 0,
+      imgTotal: imgTotal || null,
+      imgTax: imgTax || null
+    };
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function processWithOllama(base64Data: string, model: string) {
   const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
   console.log(`[Ollama] Using model: ${model} at ${ollamaUrl}`);
@@ -152,15 +201,15 @@ async function processWithOllama(base64Data: string, model: string) {
       body: JSON.stringify({
         model: model,
         prompt: `Analise esta nota fiscal brasileira e extraia os valores numéricos.
-IMPORTANTE: Para o valor total, use o "VALOR A PAGAR" ou "TOTAL LÍQUIDO" (após descontos). NÃO use o valor bruto se houver descontos.
+IMPORTANTE: Para o valor total, use o \"VALOR A PAGAR\" ou \"TOTAL LÍQUIDO\" (após descontos). NÃO use o valor bruto se houver descontos.
 
 Siga estas instruções:
-1. Localize o "VALOR A PAGAR" ou "TOTAL R$" final.
-2. Localize a frase "Trib aprox" ou "Lei 12.741".
-3. Extraia o valor de "Federal" e o valor de "Estadual".
+1. Localize o \"VALOR A PAGAR\" ou \"TOTAL R$\" final.
+2. Localize a frase \"Trib aprox\" ou \"Lei 12.741\".
+3. Extraia o valor de \"Federal\" e o valor de \"Estadual\".
 
 Responda APENAS o JSON:
-{"total": 0.0, "taxFederal": 0.0, "taxState": 0.0}
+{\"total\": 0.0, \"taxFederal\": 0.0, \"taxState\": 0.0}
 
 Use 0.0 se não encontrar.`,
         images: [base64Data],
@@ -267,7 +316,7 @@ app.get("/api/ollama/check", async (req, res) => {
 
 app.post("/api/receipts", async (req, res) => {
   try {
-    const { imageBase64, mimeType, engine, ollamaModel } = req.body;
+    const { imageBase64, mimeType, engine, ollamaModel, customUrl, customModel } = req.body;
     if (!imageBase64) {
       return res.status(400).json({ error: "No image provided" });
     }
@@ -290,6 +339,14 @@ app.post("/api/receipts", async (req, res) => {
         }
       } catch (error) {
         console.error("[Ollama] Failed or timed out, falling back to Gemini:", error);
+        usedFallback = true;
+        data = await processWithGemini(base64Data, mimeType);
+      }
+    } else if (engine === "custom") {
+      try {
+        data = await processWithOpenAI(base64Data, customUrl, customModel);
+      } catch (error) {
+        console.error("[Custom] Failed, falling back to Gemini:", error);
         usedFallback = true;
         data = await processWithGemini(base64Data, mimeType);
       }
