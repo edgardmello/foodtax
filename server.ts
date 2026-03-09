@@ -61,9 +61,15 @@ app.post("/api/receipts", async (req, res) => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: modelToUse,
-          prompt: `Analise a nota fiscal na imagem. Extraia: total, taxFederal, taxState.
-Responda APENAS com JSON: {"total": 0.0, "taxFederal": 0.0, "taxState": 0.0}.
-Se não achar, use 0.`,
+          prompt: `Siga estas instruções rigorosamente:
+1. Localize o "VALOR TOTAL" ou "TOTAL R$" da nota fiscal.
+2. Localize a frase "Trib aprox" ou "Lei 12.741".
+3. Extraia o valor de "Federal" e o valor de "Estadual".
+
+Responda APENAS o JSON:
+{"total": 0.0, "taxFederal": 0.0, "taxState": 0.0}
+
+Não inclua explicações. Use 0.0 se não encontrar.`,
           images: [base64Data],
           stream: true
         })
@@ -84,13 +90,13 @@ Se não achar, use 0.`,
           const { done, value } = await reader.read();
           if (done) break;
           const chunk = decoder.decode(value, { stream: true });
-          // Ollama streaming returns multiple JSON objects, one per line
           const lines = chunk.split('\n');
           for (const line of lines) {
             if (line.trim()) {
               try {
                 const json = JSON.parse(line);
                 if (json.response) responseText += json.response;
+                if (json.done) break;
               } catch (e) {
                 console.error("Error parsing streaming chunk:", e);
               }
@@ -99,18 +105,21 @@ Se não achar, use 0.`,
         }
       }
       
-      console.log(`[Ollama] Accumulated response:`, responseText);
+      console.log(`[Ollama] Raw response:`, responseText);
       
       if (!responseText.trim()) {
-        throw new Error("Ollama returned an empty response. The model may not be vision-capable or failed to process the image.");
+        throw new Error("Ollama returned an empty response.");
       }
 
-      // Tenta limpar a resposta caso o modelo retorne markdown (ex: ```json ... ```)
-      const jsonMatch = responseText.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+      // Robust JSON extraction
       let jsonString = responseText;
-      if (jsonMatch) {
-        jsonString = jsonMatch[1];
+      
+      // 1. Try to find JSON inside markdown code blocks
+      const jsonBlockMatch = responseText.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
+      if (jsonBlockMatch) {
+        jsonString = jsonBlockMatch[1];
       } else {
+        // 2. Try to find anything between the first { and the last }
         const start = responseText.indexOf('{');
         const end = responseText.lastIndexOf('}');
         if (start !== -1 && end !== -1) {
@@ -118,14 +127,20 @@ Se não achar, use 0.`,
         }
       }
       
-      console.log(`[Ollama] Parsed JSON string:`, jsonString);
+      console.log(`[Ollama] Extracted JSON string:`, jsonString);
       try {
         data = JSON.parse(jsonString);
+        // Normalize field names (case insensitive-ish)
+        data = {
+          total: data.total || data.Total || 0,
+          taxFederal: data.taxFederal || data.tax_federal || data.taxFederalValue || 0,
+          taxState: data.taxState || data.tax_state || data.taxStateValue || 0
+        };
       } catch (e) {
-        console.error("[Ollama] JSON Parse Error:", e);
+        console.error("[Ollama] JSON Parse Error:", e, "Original text:", responseText);
         throw new Error("Failed to parse JSON response from Ollama.");
       }
-      console.log(`[Ollama] Final parsed data:`, data);
+      console.log(`[Ollama] Final normalized data:`, data);
     } else {
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
