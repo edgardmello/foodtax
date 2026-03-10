@@ -9,7 +9,7 @@ import { detectReceiptRegions, cropRegions } from "./src/ocr_utils.ts";
 dotenv.config();
 
 const app = express();
-const PORT = 3000;
+const PORT = parseInt(process.env.PORT || "3919", 10);
 
 // Increase payload limit for base64 images
 app.use(express.json({ limit: "50mb" }));
@@ -29,10 +29,22 @@ db.exec(`
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
 
+// Helper function to add timeout to any promise
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, errorMessage: string): Promise<T> {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(errorMessage)), timeoutMs)
+    )
+  ]);
+}
+
 async function processWithGemini(base64Data: string, mimeType: string) {
   console.log("[Gemini] Processing receipt...");
-  const response = await ai.models.generateContent({
-    model: "gemini-1.5-flash", // Tentando manter o padrão, mas se falhar o Tesseract assume
+  const data = await withTimeout(
+    (async () => {
+      const response = await ai.models.generateContent({
+      model: "gemini-1.5-flash",
     contents: [
       {
         inlineData: {
@@ -83,9 +95,12 @@ Se não encontrar um valor, use 0.`,
         required: ["total", "taxFederal", "taxState"],
       },
     },
-  });
-
-  const data = JSON.parse(response.text || "{}");
+      });
+      return JSON.parse(response.text || "{}");
+    })(),
+    50000,
+    "Tempo limite de análise excedido (50s). O Gemini demorou muito para responder."
+  );
   
   let imgTotalBase64 = null;
   let imgTaxBase64 = null;
@@ -142,7 +157,7 @@ async function processWithOpenAI(base64Data: string, url: string, model: string)
   console.log(`[OpenAI-Comp] Using URL: ${url} and model: ${model}`);
   
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000);
+  const timeoutId = setTimeout(() => controller.abort(), 50000);
 
   try {
     const res = await fetch(`${url}/v1/chat/completions`, {
@@ -154,7 +169,17 @@ async function processWithOpenAI(base64Data: string, url: string, model: string)
           {
             role: "user",
             content: [
-              { type: "text", text: "Analise esta nota fiscal brasileira e extraia o JSON: {\"total\": 0.0, \"taxFederal\": 0.0, \"taxState\": 0.0}. Responda apenas o JSON." },
+              { type: "text", text: `Analise esta nota fiscal brasileira e extraia os valores numéricos.
+
+IMPORTANTE: Para o valor total, use EXCLUSIVAMENTE "Valor Pago". NÃO use "Valor total", "Subtotal" ou "Total R$".
+
+Para os impostos, busque por uma dessas variações:
+- "TRIB APROX: FEDERAL" ou "Trib Federais:" ou "Tributos Federais"
+- "TRIB APROX: ESTADUAL" ou "Trib Estaduais:" ou "Tributos Estaduais"
+
+NUNCA retorne o valor logo após "Tributos Totais Incidentes(Lei Fed. 12.741/2012):" pois esse é a soma dos impostos.
+
+Responda APENAS o JSON: {"total": 0.0, "taxFederal": 0.0, "taxState": 0.0}. Use 0.0 se não encontrar.` },
               { type: "image_url", image_url: { url: `data:image/jpeg;base64,${base64Data}` } }
             ]
           }
@@ -197,6 +222,11 @@ async function processWithOpenAI(base64Data: string, url: string, model: string)
       imgTotal: imgTotal || null,
       imgTax: imgTax || null
     };
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error("Tempo limite de análise excedido (50s). O modelo demorou muito para responder.");
+    }
+    throw error;
   } finally {
     clearTimeout(timeoutId);
   }
@@ -207,7 +237,7 @@ async function processWithOllama(base64Data: string, model: string) {
   console.log(`[Ollama] Using model: ${model} at ${ollamaUrl}`);
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 seconds timeout
+  const timeoutId = setTimeout(() => controller.abort(), 50000); // 50 seconds timeout
 
   try {
     const ollamaRes = await fetch(`${ollamaUrl}/api/generate`, {
@@ -216,12 +246,19 @@ async function processWithOllama(base64Data: string, model: string) {
       body: JSON.stringify({
         model: model,
         prompt: `Analise esta nota fiscal brasileira e extraia os valores numéricos.
-IMPORTANTE: Para o valor total, use o \"VALOR A PAGAR\" ou \"TOTAL LÍQUIDO\" (após descontos). NÃO use o valor bruto se houver descontos.
+
+IMPORTANTE: Para o valor total, use EXCLUSIVAMENTE \"Valor Pago\". NÃO use \"Valor total\", \"Subtotal\", \"VALOR A PAGAR\", \"TOTAL LÍQUIDO\" ou \"Total R$\".
+
+Para os impostos, busque por uma dessas variações:
+- Federal: \"TRIB APROX: FEDERAL\", \"Trib Federais:\", ou \"Tributos Federais\"
+- Estadual: \"TRIB APROX: ESTADUAL\", \"Trib Estaduais:\", ou \"Tributos Estaduais\"
+
+NUNCA retorne o valor logo após \"Tributos Totais Incidentes(Lei Fed. 12.741/2012):\" pois esse é a soma dos impostos.
 
 Siga estas instruções:
-1. Localize o \"VALOR A PAGAR\" ou \"TOTAL R$\" final.
-2. Localize a frase \"Trib aprox\" ou \"Lei 12.741\".
-3. Extraia o valor de \"Federal\" e o valor de \"Estadual\".
+1. Localize EXATAMENTE \"Valor Pago\".
+2. Localize o valor do imposto federal (procure por \"Trib Federais\" ou similar).
+3. Localize o valor do imposto estadual (procure por \"Trib Estaduais\" ou similar).
 
 Responda APENAS o JSON:
 {\"total\": 0.0, \"taxFederal\": 0.0, \"taxState\": 0.0}
@@ -284,9 +321,9 @@ Use 0.0 se não encontrar.`,
       data = JSON.parse(jsonString);
     } catch (e) {
       console.warn("[Ollama] JSON Parse failed, attempting regex extraction...");
-      const totalMatch = responseText.match(/(?:VALOR A PAGAR|TOTAL R\$|Total|TOTAL).*?(\d+[,.]\d{2})/i);
-      const fedMatch = responseText.match(/(?:Federal|Fed).*?(\d+[,.]\d{2})/i);
-      const stateMatch = responseText.match(/(?:Estadual|Est).*?(\d+[,.]\d{2})/i);
+      const totalMatch = responseText.match(/(?:Valor Pago).*?(\d+[,.]\d{2})/i);
+      const fedMatch = responseText.match(/(?:Trib Federais|TRIB APROX.*?FEDERAL|Tributos Federais).*?R?\$?\s*(\d+[,.]\d{2})/i);
+      const stateMatch = responseText.match(/(?:Trib Estaduais|TRIB APROX.*?ESTADUAL|Tributos Estaduais).*?R?\$?\s*(\d+[,.]\d{2})/i);
       
       data = {
         total: totalMatch ? parseFloat(totalMatch[1].replace(',', '.')) : 0,
@@ -312,6 +349,11 @@ Use 0.0 se não encontrar.`,
       imgTotal: imgTotal || null,
       imgTax: imgTax || null
     };
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      throw new Error("Tempo limite de análise excedido (50s). O modelo demorou muito para responder.");
+    }
+    throw error;
   } finally {
     clearTimeout(timeoutId);
   }
@@ -380,15 +422,23 @@ app.post("/api/receipts", async (req, res) => {
           console.warn("[Ollama] Model returned all zeros, triggering fallback to Gemini.");
           throw new Error("Ollama returned zeros");
         }
-      } catch (error) {
-        console.error("[Ollama] Failed or timed out, falling back to Gemini:", error);
+      } catch (error: any) {
+        if (error.message?.includes("Tempo limite") || error.name === 'AbortError') {
+          console.error("[Ollama] Timeout error:", error);
+          return res.status(408).json({ error: error.message || "Tempo limite de análise excedido (50s)." });
+        }
+        console.error("[Ollama] Failed, falling back to Gemini:", error);
         usedFallback = true;
         data = await processWithGemini(base64Data, mimeType);
       }
     } else if (engine === "custom") {
       try {
         data = await processWithOpenAI(base64Data, customUrl, customModel);
-      } catch (error) {
+      } catch (error: any) {
+        if (error.message?.includes("Tempo limite") || error.name === 'AbortError') {
+          console.error("[Custom] Timeout error:", error);
+          return res.status(408).json({ error: error.message || "Tempo limite de análise excedido (50s)." });
+        }
         console.error("[Custom] Failed, falling back to Gemini:", error);
         usedFallback = true;
         data = await processWithGemini(base64Data, mimeType);
@@ -409,9 +459,13 @@ app.post("/api/receipts", async (req, res) => {
     );
 
     res.json({ id: info.lastInsertRowid, ...data, fallback: usedFallback });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error processing receipt:", error);
-    res.status(500).json({ error: "Failed to process receipt" });
+    if (error.message?.includes("Tempo limite")) {
+      res.status(408).json({ error: error.message || "Tempo limite de análise excedido (50s)." });
+    } else {
+      res.status(500).json({ error: "Failed to process receipt" });
+    }
   }
 });
 
